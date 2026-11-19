@@ -1,26 +1,98 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <SDL2/SDL.h>
+#include <math.h>
+
+#define PI 3.141592
 
 #define WINDOW_WIDTH  900
 #define WINDOW_HEIGHT 600
 
 #define COLOUR_WHITE 0xffffffff
+#define COLOUR_BLACK 0xff000000
 
 typedef struct
 {
 	double x, y, radius;
 } Circle;
 
-void FillCircle(SDL_Surface* surf, struct Circle circle)
+typedef struct
 {
-	// calc distance between a point and the centre of the circle, fill all pixels withint that range. Limit checking to pixels within the circles width/height.
-	// left/right sides = x +- radius
-	// top/bottom sides = y +- radius
-	
-	float middle = surf->w / 2.0;
-	for (int i = 0; i < surf->w ** 2; i++) {
-		// for each pixel, check distance, draw in all four quadrants, maybe 8 if I can figure it out
+	double x, y;
+} Vec2;
+
+typedef struct
+{
+	double x, y, z;
+} Vec3;
+
+// for every pixel:
+// - calculate angle between normal and light ray
+// - calculate light intensity
+// - calculate final colour
+
+static void VecSub(Vec3* a, Vec3* b) { a->x -= b->x; a->y -= b->y; a->z -= b->z; }
+static void VecAdd(Vec3* a, Vec3* b) { a->x += b->x; a->y += b->y; a->z += b->z; }
+static double VecDotProd(Vec3* a, Vec3* b) { return a->x*b->x + a->y*b->y + a->z*b->z; }
+
+void ConvToUnitVec(Vec3* a) {
+	double mag = sqrt(pow(a->x, 2) + pow(a->y, 2) + pow(a->z, 2));
+	a->x /= mag;
+	a->y /= mag;
+	a->z /= mag;
+}
+
+double CalcNormalAngle(Circle* circle, Vec3* point) {
+	double dist_from_centre_squared = pow(circle->x - point->x, 2) + pow(circle->y - point->y,2); // adj in elev calculation
+	double dist_from_centre = sqrt(dist_from_centre_squared);
+	double point_elev = sqrt(pow(circle->radius, 2) - dist_from_centre_squared);
+	point->z = point_elev;
+	double cos_normal_angle = (dist_from_centre_squared + pow(circle->radius, 2) - pow(point_elev, 2)) / (2 * dist_from_centre * circle->radius);
+	return acos(cos_normal_angle);
+}
+
+//double CalcLightIntensity(Vec3* point, Vec3* normalVec, Vec3* lightPos) {
+	// calculate the angle the light would hit the surface
+	// use light intensity formula
+//}
+
+Uint32 LightPoint(Circle* circle, Vec3* point, Vec3* lightSrc) {
+	// full pipeline function, sets final colour value, holds values
+	// 1. Create circle to point normal unit vec
+	double normalAng = CalcNormalAngle(circle, point); // point now has an elevation
+	Vec3 normal = *point;
+	Vec3 radiusVec = (Vec3){circle->x,circle->y,0};
+	VecSub(&normal, &radiusVec);
+	ConvToUnitVec(&normal);
+	// 2. Create light to point unit vec
+	Vec3 ray = *lightSrc;
+	VecSub(&ray, point);
+	ConvToUnitVec(&ray);
+
+	// 3. Calc light intensity (using function)
+	double I = fmax(0, VecDotProd(&normal, &ray));
+
+	// 4. determine final pixel colour (idk how to do this yet)
+	Uint8 v = (Uint8)(255 * I + 0.5);
+	if (point->x == 450 && point->y == 300) {
+		//printf("x: %f, y: %f, z: %f\n", point->x, point->y, point->z);
+	}
+
+	return (0xff000000u | (Uint32)(v << 16) | (Uint32)(v << 8) | v);
+}
+
+void FillCircle(SDL_Surface* surf, Circle* circle, Vec3* lightSrc)
+{
+	double radius_squared = pow(circle->radius, 2);
+	for (double y=circle->y - circle->radius; y<=circle->y + circle->radius; y++) {
+		for (double x=circle->x - circle->radius; x<=circle->x + circle->radius; x++) {
+			double dist_squared = pow(x - circle->x, 2) + pow(y - circle->y, 2);
+			if (dist_squared <= radius_squared) {
+				SDL_Rect pixel = (SDL_Rect){x,y,1,1};
+				Vec3 point = (Vec3){x, y, 0};
+				SDL_FillRect(surf, &pixel, LightPoint(circle, &point, lightSrc));
+			}
+		}
 	}
 }
 
@@ -42,31 +114,16 @@ int main()
     return 1;
   }
 
-  SDL_Renderer *renderer = SDL_CreateRenderer(window, -1,
-    SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-  if (!renderer) {
-    fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
-    SDL_DestroyWindow(window);
-    SDL_Quit();
-    return 1;
-  }
-
-	SDL_Surface surf = SDL_CreateRGBSurfaceWithFormat(0, 32, 32, 32, SDL_PIXELFORMAT_RGBA32);
+	SDL_Surface* surf = SDL_GetWindowSurface(window);
 	if (!surf) {
 		fprintf(stderr, "Surface failed: %s\n", SDL_GetError());
 	}
-	SDL_FillRect(surf, NULL, SDL_MapRGBA(surf->format, 0, 0, 0, 0));
 
-	struct Circle circle = {400.0, 400.0, 100.0};
-	FillCircle(surf, circle);
-
-	SDL_Texture *sphere = SDL_CreateTextureFromSurface(renderer, surf);
-	SDL_FreeSurface(surf);
-	SDL_SetTextureBlendMode(sprite, SDL_BLENDMODE_BLEND);
+	Circle circle = {450.0, 300.0, 100.0};
+	Vec3 lightSrc = {450, 450, 300};
 
   bool running = true;
   SDL_Event event;
-
   while (running) {
     while (SDL_PollEvent(&event)) {
       if (event.type == SDL_QUIT)
@@ -74,19 +131,26 @@ int main()
       else if (event.type == SDL_KEYDOWN &&
         event.key.keysym.sym == SDLK_ESCAPE)
         running = false;
-      }
 
-      SDL_SetRenderDrawColor(renderer, 20, 20, 30, 255);
-      SDL_RenderClear(renderer);
+			if (event.type == SDL_MOUSEMOTION && event.motion.state == SDL_BUTTON_LMASK) {
+				//printf("%d\n", event.motion.state);
+				lightSrc.x = event.motion.x;
+				lightSrc.y = event.motion.y;
+			}
 
-			FillCircle(surface, COLOUR_WHITE);
-				
-      SDL_RenderPresent(renderer);
+			if (event.type == SDL_MOUSEWHEEL) {
+				lightSrc.z -= event.wheel.y * 10;
+				printf("light height: %.0f\n", lightSrc.z);
+			}
+    }
+
+		SDL_FillRect(surf, NULL, COLOUR_BLACK);
+
+		FillCircle(surf, &circle, &lightSrc);
+		SDL_UpdateWindowSurface(window);
+		SDL_Delay(10);
   }
 
-	SDL_DestroyTexture(sprite);
-
-  SDL_DestroyRenderer(renderer);
   SDL_DestroyWindow(window);
   SDL_Quit();
   return 0;
