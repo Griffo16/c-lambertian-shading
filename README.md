@@ -2,7 +2,7 @@
 Implements per-pixel Lambertian shading in a 2D environment with a simulated 3rd dimension.
 
 ## Quickstart Guide
-### Install SDL2 (once per machine)
+### Install SDL2
 - **Ubuntu/Debian/WSL:** `sudo apt install build-essential libsdl2-dev`
 - **Fedora:** `sudo dnf install SDL2-devel`
 - **Arch:** `sudo pacman -S sdl2`
