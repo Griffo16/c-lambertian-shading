@@ -1,4 +1,4 @@
-# SDL2 Ray Tracer
+# SDL2 Lambertian Shader
 Implements per-pixel Lambertian shading in a 2D environment with a simulated 3rd dimension.
 
 ## Quickstart Guide
